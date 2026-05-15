@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Racing Lap Timer - GT3 Endurance</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Вертикальные поребрики */
+        .curb-vertical {
+            width: 16px;
+            background: repeating-linear-gradient(180deg, #e53e3e 0, #e53e3e 30px, #f7fafc 30px, #f7fafc 60px);
+            background-size: 100% 60px;
+        }
+        /* Двухполосный асфальт */
+        .track-road-vertical {
+            background-color: #2d3748;
+            background-image: 
+                linear-gradient(180deg, transparent 0, transparent 40px, rgba(255,255,255,0.4) 40px, rgba(255,255,255,0.4) 80px);
+            background-position: 50% 0;
+            background-size: 4px 120px;
+            background-repeat: repeat-y;
+            box-shadow: inset 0 0 50px rgba(0,0,0,0.8);
+        }
+
+        /* Линии старта и финиша */
+        .track-line {
+            position: absolute;
+            left: 0; right: 0;
+            height: 30px;
+            background: repeating-conic-gradient(#1a202c 0% 25%, #edf2f7 0% 50%) 50% / 14px 14px;
+            z-index: 10;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            pointer-events: none;
+        }
+
+        /* GT3 Машинка */
+        .gt3-car {
+            position: absolute;
+            width: 40px;
+            height: 85px;
+            transform: translateX(-50%);
+            z-index: 20;
+            transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1), top 0.3s ease-out, left 0.4s ease-in-out;
+            filter: drop-shadow(0 8px 10px rgba(0,0,0,0.5));
+        }
+        
+        @media (min-width: 768px) {
+            .gt3-car { width: 50px; height: 100px; }
+        }
+
+        .gt3-sprite {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            border-radius: 4px;
+        }
+
+        .gt3-fallback {
+            width: 100%;
+            height: 100%;
+            border-radius: 6px;
+            display: none;
+        }
+
+        .car-label {
+            position: absolute;
+            top: -28px;
+            left: 50%;
+            transform: translateX(-50%);
+            white-space: nowrap;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 800;
+            color: white;
+            border: 1px solid rgba(255,255,255,0.2);
+            backdrop-filter: blur(2px);
+            z-index: 30;
+        }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1f2937; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 font-sans h-screen flex flex-row overflow-hidden">
+
+    <!-- Левая панель: Трек -->
+    <aside id="track-container" class="relative w-40 md:w-64 h-full shrink-0 shadow-[5px_0_20px_rgba(0,0,0,0.7)] z-20 flex border-r border-gray-700 bg-gray-800 overflow-hidden">
+        <div class="curb-vertical h-full z-10 shadow-lg"></div>
+        
+        <div class="track-road-vertical flex-1 h-full relative z-0">
+            <div id="finish-line" class="track-line opacity-0" style="top: -1000px;">
+                <div class="absolute inset-0 flex items-center justify-center bg-black/50 text-white font-bold tracking-widest text-xs uppercase backdrop-blur-sm">Finish</div>
+            </div>
+            <div id="start-line" class="track-line opacity-0" style="top: 1000px;">
+                <div class="absolute inset-0 flex items-center justify-center bg-black/50 text-white font-bold tracking-widest text-xs uppercase backdrop-blur-sm">Start</div>
+            </div>
+
+            <div id="cars-layer" class="absolute inset-0"></div>
+        </div>
+
+        <div class="curb-vertical h-full z-10 shadow-lg"></div>
+        
+        <div class="absolute top-4 left-4 z-40 bg-black/60 backdrop-blur-md border border-white/10 p-2 rounded-lg pointer-events-none">
+            <div class="text-[9px] uppercase text-gray-400 font-bold tracking-tighter">Your Position</div>
+            <div id="pos-display" class="text-2xl font-black italic text-yellow-400">1 / 10</div>
+        </div>
+    </aside>
+
+    <!-- Правая панель: Интерфейс -->
+    <div class="flex-1 flex flex-col h-full overflow-y-auto bg-gray-900 relative">
+        <header class="bg-gray-800 border-b border-gray-700 p-6 flex flex-col xl:flex-row justify-between items-center gap-6 sticky top-0 z-10 shadow-md">
+            <div class="flex flex-col items-center xl:items-start gap-1">
+                <h1 class="text-xl font-bold text-yellow-400 tracking-wider uppercase">Endurance GT3</h1>
+                <div id="timerDisplay" class="text-5xl lg:text-6xl font-mono font-bold tracking-widest text-white drop-shadow-md">00:00:00</div>
+                <div id="finishAtDisplay" class="text-xs text-gray-400 font-bold uppercase tracking-widest">Finish at: --:--</div>
+            </div>
+            
+            <div class="flex flex-wrap justify-center gap-3">
+                <button id="btnStart" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded uppercase font-bold tracking-wider shadow-lg transition-transform active:scale-95 text-sm">Настройки / Старт</button>
+                <button id="btnCorrect" disabled class="bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-white px-6 py-3 rounded uppercase font-bold tracking-wider shadow-lg transition-transform active:scale-95 text-sm">Корректировка</button>
+                <button id="btnMove" disabled class="bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-white px-8 py-3 rounded uppercase font-bold tracking-wider shadow-lg transition-transform active:scale-95 flex items-center gap-2">
+                    Move <span class="bg-white/20 px-2 py-0.5 rounded text-xs">L / Д</span>
+                </button>
+            </div>
+        </header>
+
+        <main class="flex-1 flex flex-col lg:flex-row gap-6 p-6">
+            <div class="w-full lg:w-1/3 space-y-4">
+                <h2 class="text-xl font-bold uppercase border-b border-gray-700 pb-2">Статистика</h2>
+                <div class="bg-gray-800 p-5 rounded-lg shadow-md border border-gray-700 flex justify-between items-center">
+                    <span class="text-gray-400">Average:</span>
+                    <span id="stat-avg" class="font-mono text-xl text-blue-400">--:--:--</span>
+                </div>
+                <div class="bg-gray-800 p-5 rounded-lg shadow-md border border-gray-700 flex justify-between items-center">
+                    <span class="text-gray-400">Best:</span>
+                    <span id="stat-best" class="font-mono text-xl text-green-400">--:--:--</span>
+                </div>
+                <div class="bg-gray-800 p-5 rounded-lg shadow-md border border-gray-700 flex justify-between items-center">
+                    <span class="text-gray-400">Worst:</span>
+                    <span id="stat-worst" class="font-mono text-xl text-red-400">--:--:--</span>
+                </div>
+            </div>
+
+            <div class="w-full lg:w-2/3 flex flex-col h-full min-h-[300px]">
+                <h2 class="text-xl font-bold uppercase border-b border-gray-700 pb-2 mb-4">История отрезков</h2>
+                <div class="bg-gray-800 rounded-lg shadow-md border border-gray-700 overflow-hidden flex-1 relative">
+                    <div class="absolute inset-0 overflow-y-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead class="bg-gray-700 sticky top-0 z-10 shadow">
+                                <tr>
+                                    <th class="p-4 font-semibold text-gray-300">№ Отрезка</th>
+                                    <th class="p-4 font-semibold text-gray-300">Время отрезка</th>
+                                    <th class="p-4 font-semibold text-gray-300">Общее время</th>
+                                </tr>
+                            </thead>
+                            <tbody id="lap-table-body" class="divide-y divide-gray-700 font-mono text-sm"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Модалка: Настройки -->
+    <div id="settingsModal" class="fixed inset-0 bg-black/80 hidden items-center justify-center z-50 p-4 backdrop-blur-sm">
+        <div class="bg-gray-800 border border-gray-600 rounded-xl max-w-2xl w-full shadow-2xl flex flex-col max-h-[90vh]">
+            <div class="p-6 border-b border-gray-700 flex justify-between items-center bg-gray-800 rounded-t-xl">
+                <h2 class="text-2xl font-bold text-white uppercase tracking-wider">Стартовая решетка</h2>
+            </div>
+            
+            <div class="p-6 overflow-y-auto flex-1 bg-gray-900/50">
+                <div class="bg-gray-800 p-4 rounded-lg border border-gray-700 mb-6 shadow-inner">
+                    <label class="block text-sm text-gray-400 mb-2 font-bold uppercase">Время окончания гонки</label>
+                    <div class="flex gap-4 items-center">
+                        <div class="flex-1">
+                            <input type="number" id="input-finish-h" min="0" max="23" value="16" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500 font-mono text-xl text-center">
+                            <span class="text-[10px] text-gray-500 uppercase mt-1 block text-center font-bold">Часы (0-23)</span>
+                        </div>
+                        <div class="text-2xl font-bold text-gray-600">:</div>
+                        <div class="flex-1">
+                            <input type="number" id="input-finish-m" min="0" max="59" value="0" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500 font-mono text-xl text-center">
+                            <span class="text-[10px] text-gray-500 uppercase mt-1 block text-center font-bold">Минуты</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="space-y-1">
+                    <div id="settings-cars-list" class="space-y-2"></div>
+                </div>
+            </div>
+
+            <div class="p-6 bg-gray-800 border-t border-gray-700 rounded-b-xl flex gap-3">
+                <button id="btnCancelModal" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-3 rounded font-bold uppercase tracking-wider transition-colors">Отмена</button>
+                <button id="btnSaveModal" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded font-bold uppercase tracking-wider shadow-lg shadow-blue-900/50 transition-colors">Начать</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модалка: Корректировка (Расширенная) -->
+    <div id="correctionModal" class="fixed inset-0 bg-black/80 hidden items-center justify-center z-50 p-4 backdrop-blur-sm">
+        <div class="bg-gray-800 border border-purple-600 rounded-xl p-8 max-w-md w-full shadow-2xl">
+            <h2 class="text-2xl font-bold text-white mb-6 uppercase text-center text-purple-400 tracking-wider">Корректировка заезда</h2>
+            <div class="space-y-6">
+                <!-- Смена кругов -->
+                <div class="bg-purple-900/20 border border-purple-800/50 p-4 rounded-lg">
+                    <label class="block text-xs text-yellow-400 mb-2 uppercase font-bold text-center">Пройденные отрезки (You)</label>
+                    <input type="number" id="corr-user" step="1" min="0" class="w-full bg-gray-900 border border-yellow-600/50 rounded p-3 text-white outline-none focus:border-yellow-500 text-center font-mono text-2xl">
+                </div>
+
+                <!-- Смена времени начала (для восстановления) -->
+                <div class="bg-blue-900/20 border border-blue-800/50 p-4 rounded-lg">
+                    <label class="block text-xs text-blue-400 mb-2 uppercase font-bold text-center">Время начала гонки (Факт)</label>
+                    <div class="flex gap-2 items-center">
+                        <input type="number" id="corr-start-h" min="0" max="23" placeholder="ЧЧ" class="w-full bg-gray-900 border border-blue-600/50 rounded p-2 text-white outline-none focus:border-blue-500 text-center font-mono">
+                        <span class="text-white font-bold">:</span>
+                        <input type="number" id="corr-start-m" min="0" max="59" placeholder="ММ" class="w-full bg-gray-900 border border-blue-600/50 rounded p-2 text-white outline-none focus:border-blue-500 text-center font-mono">
+                    </div>
+                    <p class="text-[9px] text-gray-500 mt-2 text-center uppercase">Измените, если нужно восстановить середину гонки</p>
+                </div>
+            </div>
+            <div class="mt-8 flex gap-3">
+                <button id="btnCancelCorr" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-3 rounded font-bold uppercase transition-colors">Отмена</button>
+                <button id="btnSaveCorr" class="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-3 rounded font-bold uppercase shadow-lg shadow-purple-900/50 transition-colors">Применить</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const STORAGE_KEY = 'gt3_endurance_settings_v3';
+        const carColors = ['#eab308', '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#f97316', '#6366f1', '#ec4899'];
+        
+        // Ссылки оставлены как в исходном файле по просьбе пользователя
+        const carSkins = [
+            'cars/rollsRoyce.png',
+            'cars/blue.png',
+            'cars/crab.png',
+            'cars/darkBlue.png', 
+            'cars/ferrari.png',
+            'cars/grey.png',
+            'cars/greyFerrari.png',
+            'cars/orange.png',
+            'cars/purple.png',
+            'cars/whiteCar.png'
+        ];
+
+        const LAP_HEIGHT = 160; 
+        const MIN_DIST = 0.6; 
+
+        let endTime = 0, startTime = 0, isRacing = false;
+        let finishTargetTime = { h: 16, m: 0 }; 
+        let timerDuration = 3600000;
+        
+        let raceGrid = [];
+        let userLaps = 0; 
+        let visualUserLaps = 0; 
+        let lapHistory = [];
+        let lastLapTime = 0;
+        let animationFrameId;
+
+        const els = {
+            btnStart: document.getElementById('btnStart'),
+            btnMove: document.getElementById('btnMove'),
+            btnCorrect: document.getElementById('btnCorrect'),
+            timerDisplay: document.getElementById('timerDisplay'),
+            finishAtDisplay: document.getElementById('finishAtDisplay'),
+            trackContainer: document.getElementById('track-container'),
+            layer: document.getElementById('cars-layer'),
+            finishLine: document.getElementById('finish-line'),
+            startLine: document.getElementById('start-line'),
+            posDisplay: document.getElementById('pos-display'),
+            modal: document.getElementById('settingsModal'),
+            settingsList: document.getElementById('settings-cars-list'),
+            correctionModal: document.getElementById('correctionModal'),
+            statAvg: document.getElementById('stat-avg'),
+            statBest: document.getElementById('stat-best'),
+            statWorst: document.getElementById('stat-worst'),
+            tableBody: document.getElementById('lap-table-body'),
+            corrStartH: document.getElementById('corr-start-h'),
+            corrStartM: document.getElementById('corr-start-m')
+        };
+
+        function loadSettings() {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) {
+                try { return JSON.parse(saved); } catch(e) {}
+            }
+            return Array.from({length: 10}, (_, i) => ({
+                id: i,
+                name: i === 0 ? 'You' : `GT-${i}`,
+                targetLaps: i === 0 ? 50 : 40 + Math.floor(Math.random() * 15),
+                color: carColors[i],
+                skin: carSkins[i],
+                idealLaps: 0,
+                visualLaps: 0,
+                visualLane: '25%',
+                startOffsetLaps: 0
+            }));
+        }
+
+        function saveSettings() {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(raceGrid));
+        }
+
+        const formatTimer = (ms) => {
+            if (ms < 0) ms = 0;
+            const h = String(Math.floor(ms / 3600000)).padStart(2, '0');
+            const m = String(Math.floor((ms % 3600000) / 60000)).padStart(2, '0');
+            const s = String(Math.floor((ms % 60000) / 1000)).padStart(2, '0');
+            return `${h}:${m}:${s}`;
+        };
+
+        const formatLapTime = (ms) => {
+            if (ms === '--' || isNaN(ms)) return '--:--:--';
+            const sTotal = Math.floor(ms / 1000);
+            return `${String(Math.floor(sTotal / 3600)).padStart(2, '0')}:${String(Math.floor((sTotal % 3600) / 60)).padStart(2, '0')}:${String(sTotal % 60).padStart(2, '0')}`;
+        };
+
+        function calculateExactStartTime(h, m) {
+            const d = new Date();
+            d.setHours(h, m, 0, 0);
+            // Если время в будущем, значит гонка началась вчера (редкий случай для сессии)
+            if (d > new Date()) d.setDate(d.getDate() - 1);
+            return d.getTime();
+        }
+
+        function calculateEndTime(h, m) {
+            const now = new Date();
+            const target = new Date();
+            target.setHours(h, m, 0, 0);
+            if (target <= now) target.setDate(target.getDate() + 1);
+            return target.getTime();
+        }
+
+        function renderSettingsList() {
+            els.settingsList.innerHTML = raceGrid.map(car => `
+                <div class="grid grid-cols-12 gap-3 items-center bg-gray-800 p-2 rounded-lg border border-gray-700">
+                    <div class="col-span-1 flex justify-center">
+                        <img src="${car.skin}" class="w-6 h-6 object-contain" onerror="this.src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=='">
+                    </div>
+                    <div class="col-span-7">
+                        <input type="text" id="setup-name-${car.id}" value="${car.name}" class="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-white outline-none">
+                    </div>
+                    <div class="col-span-4">
+                        <input type="number" id="setup-laps-${car.id}" value="${car.targetLaps}" min="1" class="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs text-white text-center font-mono outline-none">
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        els.btnStart.addEventListener('click', () => {
+            raceGrid = loadSettings(); 
+            renderSettingsList();
+            els.modal.classList.remove('hidden'); els.modal.classList.add('flex');
+        });
+
+        document.getElementById('btnCancelModal').addEventListener('click', () => els.modal.classList.add('hidden'));
+
+        document.getElementById('btnSaveModal').addEventListener('click', () => {
+            const h = parseInt(document.getElementById('input-finish-h').value) || 0;
+            const m = parseInt(document.getElementById('input-finish-m').value) || 0;
+            finishTargetTime = { h, m };
+            
+            raceGrid.forEach(car => {
+                car.name = document.getElementById(`setup-name-${car.id}`).value || `Car ${car.id}`;
+                car.targetLaps = parseInt(document.getElementById(`setup-laps-${car.id}`).value) || 10;
+            });
+            saveSettings();
+            startRace();
+        });
+
+        els.btnCorrect.addEventListener('click', () => {
+            document.getElementById('corr-user').value = userLaps;
+            const sDate = new Date(startTime);
+            els.corrStartH.value = sDate.getHours();
+            els.corrStartM.value = sDate.getMinutes();
+            els.correctionModal.classList.remove('hidden'); els.correctionModal.classList.add('flex');
+        });
+
+        document.getElementById('btnCancelCorr').addEventListener('click', () => els.correctionModal.classList.add('hidden'));
+
+        document.getElementById('btnSaveCorr').addEventListener('click', () => {
+            const newU = parseInt(document.getElementById('corr-user').value) || 0;
+            const newH = parseInt(els.corrStartH.value);
+            const newM = parseInt(els.corrStartM.value);
+
+            // Корректировка кругов
+            if (newU !== userLaps) {
+                userLaps = newU; visualUserLaps = userLaps; 
+                const tr = document.createElement('tr');
+                tr.className = "bg-purple-900/20 text-purple-200";
+                tr.innerHTML = `<td class="p-4 font-bold">${userLaps} <span class="text-[10px] opacity-70">(Корр.)</span></td><td class="p-4">--:--:--</td><td class="p-4">${formatLapTime(Date.now() - startTime)}</td>`;
+                els.tableBody.insertBefore(tr, els.tableBody.firstChild);
+            }
+
+            // Корректировка времени начала (восстановление сессии)
+            if (!isNaN(newH) && !isNaN(newM)) {
+                startTime = calculateExactStartTime(newH, newM);
+                // Пересчитываем длительность и время финиша на основе нового начала
+                endTime = calculateEndTime(finishTargetTime.h, finishTargetTime.m);
+                timerDuration = endTime - startTime;
+                lastLapTime = Date.now(); // Сбрасываем время текущего круга
+            }
+
+            els.correctionModal.classList.add('hidden');
+        });
+
+        function startRace() {
+            els.modal.classList.add('hidden');
+            els.btnStart.innerText = 'Restart';
+            userLaps = 0; lapHistory = [];
+            els.tableBody.innerHTML = ''; updateStatsUI();
+            
+            startTime = Date.now();
+            endTime = calculateEndTime(finishTargetTime.h, finishTargetTime.m);
+            timerDuration = endTime - startTime;
+
+            els.finishAtDisplay.innerText = `Finish at: ${String(finishTargetTime.h).padStart(2,'0')}:${String(finishTargetTime.m).padStart(2,'0')}`;
+
+            let sortedBots = raceGrid.filter(c => c.id !== 0).sort((a, b) => b.targetLaps - a.targetLaps);
+            let gridOrder = [...sortedBots, raceGrid[0]];
+            
+            gridOrder.forEach((car, index) => {
+                car.startOffsetLaps = - (index * 0.55);
+                car.visualLane = index % 2 === 0 ? '25%' : '75%';
+                car.idealLaps = car.startOffsetLaps;
+                car.visualLaps = car.startOffsetLaps;
+            });
+
+            visualUserLaps = raceGrid[0].startOffsetLaps;
+            els.layer.innerHTML = '';
+            
+            raceGrid.forEach(car => {
+                els.layer.innerHTML += `
+                    <div id="car-obj-${car.id}" class="gt3-car" style="left: ${car.visualLane}; top: -200px;">
+                        <img src="${car.skin}" class="gt3-sprite" 
+                             onerror="this.style.display='none'; document.getElementById('fb-${car.id}').style.display='block';">
+                        <div id="fb-${car.id}" class="gt3-fallback" style="background: ${car.color}"></div>
+                        <div class="car-label" style="border-color: ${car.color}">
+                            ${car.id===0 ? 'YOU' : car.name}: <span id="car-laps-${car.id}">0</span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            els.btnMove.disabled = false; els.btnCorrect.disabled = false;
+            isRacing = true; lastLapTime = startTime;
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        function gameLoop() {
+            if (!isRacing) return;
+            const now = Date.now();
+            let remaining = endTime - now;
+            if (remaining <= 0) {
+                els.timerDisplay.innerText = "00:00:00";
+                renderFrame(timerDuration); isRacing = false; els.btnMove.disabled = true;
+                return;
+            }
+            els.timerDisplay.innerText = formatTimer(remaining);
+            renderFrame(now - startTime);
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        function renderFrame(elapsed) {
+            const trackHeight = els.trackContainer.clientHeight;
+            const playerScreenY = trackHeight * 0.75; 
+
+            raceGrid.forEach(car => {
+                if (car.id !== 0) {
+                    car.idealLaps = car.startOffsetLaps + (elapsed / timerDuration) * car.targetLaps;
+                } else {
+                    car.idealLaps = car.startOffsetLaps + userLaps;
+                }
+            });
+
+            let sortedCars = [...raceGrid].sort((a, b) => b.idealLaps - a.idealLaps);
+            let lastLaps = { '25%': Infinity, '75%': Infinity };
+
+            sortedCars.forEach(car => {
+                let preferredLane = car.visualLane;
+                let otherLane = preferredLane === '25%' ? '75%' : '25%';
+                if (car.idealLaps <= lastLaps[preferredLane] - MIN_DIST) {
+                    car.visualLaps = car.idealLaps;
+                    lastLaps[preferredLane] = car.visualLaps;
+                } else if (car.idealLaps <= lastLaps[otherLane] - MIN_DIST) {
+                    car.visualLane = otherLane;
+                    car.visualLaps = car.idealLaps;
+                    lastLaps[otherLane] = car.visualLaps;
+                } else {
+                    car.visualLaps = lastLaps[preferredLane] - MIN_DIST;
+                    lastLaps[preferredLane] = car.visualLaps;
+                }
+            });
+
+            const playerCar = raceGrid.find(c => c.id === 0);
+            visualUserLaps += (playerCar.visualLaps - visualUserLaps) * 0.12;
+
+            raceGrid.forEach(car => {
+                const lapsAhead = car.visualLaps - visualUserLaps;
+                const screenY = playerScreenY - (lapsAhead * LAP_HEIGHT);
+                const el = document.getElementById(`car-obj-${car.id}`);
+                if (el) {
+                    if (screenY < -250 || screenY > trackHeight + 250) {
+                        el.style.display = 'none';
+                    } else {
+                        el.style.display = 'block';
+                        el.style.top = `${screenY}px`;
+                        el.style.left = car.visualLane;
+                        let displayLaps = car.id === 0 ? userLaps : Math.max(0, (elapsed / timerDuration) * car.targetLaps);
+                        document.getElementById(`car-laps-${car.id}`).innerText = Math.floor(displayLaps);
+                    }
+                }
+            });
+
+            const playerFinishAbsolute = raceGrid[0].targetLaps + raceGrid[0].startOffsetLaps;
+            const finishScreenY = playerScreenY - ((playerFinishAbsolute - visualUserLaps) * LAP_HEIGHT);
+            els.finishLine.style.top = `${finishScreenY}px`;
+            els.finishLine.style.opacity = (finishScreenY > -50 && finishScreenY < trackHeight + 50) ? 1 : 0;
+            const startScreenY = playerScreenY - ((0 - visualUserLaps) * LAP_HEIGHT);
+            els.startLine.style.top = `${startScreenY}px`;
+            els.startLine.style.opacity = (startScreenY > -50 && startScreenY < trackHeight + 50) ? 1 : 0;
+            updatePositionDisplay();
+        }
+
+        function registerLap() {
+            if (!isRacing) return;
+            const now = Date.now(); const diff = now - lastLapTime;
+            lastLapTime = now; userLaps++; lapHistory.push(diff);
+            const tr = document.createElement('tr');
+            tr.className = "hover:bg-gray-800 transition-colors";
+            tr.innerHTML = `<td class="p-4 border-b border-gray-700">${userLaps}</td><td class="p-4 border-b border-gray-700 text-green-400">${formatLapTime(diff)}</td><td class="p-4 border-b border-gray-700 text-gray-500">${formatLapTime(now - startTime)}</td>`;
+            els.tableBody.insertBefore(tr, els.tableBody.firstChild);
+            updateStatsUI();
+        }
+
+        function updatePositionDisplay() {
+            const userCurrent = raceGrid[0].visualLaps;
+            let rank = 1;
+            for(let i = 1; i < raceGrid.length; i++){
+                if(raceGrid[i].visualLaps > userCurrent) rank++;
+            }
+            els.posDisplay.innerText = `${rank} / ${raceGrid.length}`;
+        }
+
+        els.btnMove.addEventListener('click', registerLap);
+        document.addEventListener('keydown', (e) => {
+            if ((e.key.toLowerCase() === 'l' || e.key.toLowerCase() === 'д') && !els.btnMove.disabled) {
+                if (e.target.tagName !== 'INPUT') registerLap();
+            }
+        });
+
+        function updateStatsUI() {
+            if (!lapHistory.length) return;
+            els.statAvg.innerText = formatLapTime(lapHistory.reduce((a, b) => a + b, 0) / lapHistory.length);
+            els.statBest.innerText = formatLapTime(Math.min(...lapHistory));
+            els.statWorst.innerText = formatLapTime(Math.max(...lapHistory));
+        }
+
+        raceGrid = loadSettings();
+    </script>
+</body>
+</html>
