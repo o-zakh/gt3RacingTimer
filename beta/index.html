@@ -271,7 +271,6 @@
         </main>
     </div>
 
-
     <!-- ========================================== -->
     <!-- МОДАЛЬНЫЕ ОКНА (Относятся к Таймеру) -->
     <!-- ========================================== -->
@@ -288,7 +287,7 @@
                     <label class="block text-sm text-gray-400 mb-2 font-bold uppercase">Время окончания гонки</label>
                     <div class="flex gap-4 items-center">
                         <div class="flex-1">
-                            <input type="number" id="input-finish-h" min="0" max="23" value="16" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500 font-mono text-xl text-center">
+                            <input type="number" id="input-finish-h" min="0" max="23" value="4" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500 font-mono text-xl text-center">
                             <span class="text-[10px] text-gray-500 uppercase mt-1 block text-center font-bold">Часы (0-23)</span>
                         </div>
                         <div class="text-2xl font-bold text-gray-600">:</div>
@@ -376,13 +375,43 @@
         </div>
     </div>
 
-
     <!-- ========================================== -->
     <!-- СКРИПТЫ -->
     <!-- ========================================== -->
     <script>
-        // --- ГЛОБАЛЬНЫЙ API КЛЮЧ ---
+        // --- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ---
         let globalApiKey = localStorage.getItem('gemini_api_key') || "";
+        const STORAGE_KEY = 'gt3_endurance_settings_v5';
+        
+        const carColors = ['#eab308', '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#f97316', '#6366f1', '#ec4899'];
+        const carSkins = [
+            '../cars/rollsRoyce.png', '../cars/blue.png', '../cars/crab.png', '../cars/darkBlue.png', 
+            '../cars/ferrari.png', '../cars/grey.png', '../cars/greyFerrari.png', '../cars/orange.png',
+            '../cars/purple.png', '../cars/whiteCar.png'
+        ];
+
+        const LAP_HEIGHT = 160; 
+        const MIN_DIST = 0.6; 
+
+        let endTime = 0, startTime = 0, isRacing = false;
+        let finishTargetTime = { h: 16, m: 0 }; 
+        let timerDuration = 3600000;
+        
+        let raceGrid = [];
+        let currentRivalId = null;
+        let lastAiTriggerLap = 0;
+
+        let userLaps = 0; 
+        let visualUserLaps = 0; 
+        let lapHistory = [];
+        let lastLapTime = 0;
+        let animationFrameId;
+
+        // Для пит-стопа и Average
+        let isPitstop = false;
+        let pitstopStartTime = 0;
+        let pitstopTimeForCurrentLap = 0;
+        let totalCompletedTime = 0;
 
         // --- УПРАВЛЕНИЕ ВИДАМИ (Timer <-> Terminal) ---
         function switchView(viewName) {
@@ -432,9 +461,9 @@
             termLed.className = `w-3 h-3 rounded-full ${online ? 'bg-[#00ff41] shadow-[0_0_10px_#00ff41]' : 'bg-red-600'}`;
             termStatusText.innerText = online ? 'ONLINE' : 'OFFLINE';
             
-            // Также уведомляем радио в Таймере
-            if (online && els.aiChat.innerHTML.includes("API ключ не настроен")) {
-                els.aiChat.innerHTML = '<div class="text-center text-indigo-400/50 italic text-xs">Связь с пит-лейном установлена... Ждем старта гонки.</div>';
+            const aiChat = document.getElementById('ai-chat');
+            if (online && aiChat && aiChat.innerHTML.includes("API ключ не настроен")) {
+                aiChat.innerHTML = '<div class="text-center text-indigo-400/50 italic text-xs">Связь с пит-лейном установлена... Ждем старта гонки.</div>';
             }
         }
 
@@ -467,14 +496,14 @@
         }
 
         async function fetchWithRetryTerminal(userQuery, retries = 5) {
-            const systemPrompt = "Ты — опытный гоночный инженер команды Формулы-1/GT3. Твои ответы должны быть краткими, профессиональными, сухими и техническими. Ты даешь советы по тактике, состоянию шин и темпу. Используй гоночный сленг (box, purple sector, delta, strat 2). Если тебя спрашивают о чем-то не гоночном, игнорируй и требуй отчет о состоянии болида. Отвечай только на русском.";
+            const systemPrompt = "Ты — опытный гоночный инженер команды Формулы-1/GT3. Твои ответы должны быть краткими, профессиональными, сухими и техническими. Ты даешь советы по тактике и темпу. Используй гоночный сленг. Если тебя спрашивают о чем-то не гоночном, игнорируй и требуй отчет о состоянии болида. Отвечай только на русском.";
             
             for (let i = 0; i < retries; i++) {
                 try {
                     const delay = Math.pow(2, i) * 1000;
                     if (i > 0) await new Promise(resolve => setTimeout(resolve, delay));
 
-                    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${globalApiKey}`, {
+                    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${globalApiKey}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -494,41 +523,8 @@
 
 
         // ==========================================
-        // ЛОГИКА ТАЙМЕРА (App 1)
+        // ЛОГИКА ТАЙМЕРА
         // ==========================================
-        
-        const STORAGE_KEY = 'gt3_endurance_settings_v4';
-        const carColors = ['#eab308', '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#f97316', '#6366f1', '#ec4899'];
-        
-        const carSkins = [
-            '../cars/rollsRoyce.png', '../cars/blue.png', '../cars/crab.png', '../cars/darkBlue.png', 
-            '../cars/ferrari.png', '../cars/grey.png', '../cars/greyFerrari.png', '../cars/orange.png',
-            '../cars/purple.png', '../cars/whiteCar.png'
-        ];
-
-        const LAP_HEIGHT = 160; 
-        const MIN_DIST = 0.6; 
-
-        let endTime = 0, startTime = 0, isRacing = false;
-        let finishTargetTime = { h: 16, m: 0 }; 
-        let timerDuration = 3600000;
-        
-        let raceGrid = [];
-        let currentRivalId = null;
-        let lastAiTriggerLap = 0;
-
-        let userLaps = 0; 
-        let visualUserLaps = 0; 
-        let lapHistory = [];
-        let lastLapTime = 0;
-        let animationFrameId;
-
-        // Для пит-стопа и Average
-        let isPitstop = false;
-        let pitstopStartTime = 0;
-        let pitstopTimeForCurrentLap = 0;
-        let totalCompletedTime = 0;
-
         const els = {
             btnStart: document.getElementById('btnStart'),
             btnMove: document.getElementById('btnMove'),
@@ -564,19 +560,19 @@
             }
 
             try {
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${globalApiKey}`, {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${globalApiKey}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         contents: [{ parts: [{ text: promptText }] }],
-                        systemInstruction: { parts: [{ text: "Ты — гоночный инженер команды GT3. Пиши кратко, динамично, в стиле радиопереговоров с пилотом во время гонки. Отвечай только на русском языке. КАТЕГОРИЧЕСКИ ЗАПРЕЩАЕТСЯ использовать слова: frustration, problem, compensation, concern, разочарование, проблема, компенсация, беспокойство. Используй гоночный сленг (апекс, темп, стинт)." }] }
+                        systemInstruction: { parts: [{ text: "Ты — гоночный инженер команды GT3. Пиши кратко, динамично, в стиле радиопереговоров с пилотом во время гонки. Отвечай только на русском языке. Используй гоночный сленг (апекс, темп, стинт)." }] }
                     })
                 });
                 if (!response.ok) throw new Error('Bad Auth');
                 const data = await response.json();
                 return data.candidates?.[0]?.content?.parts?.[0]?.text || "Связь с пит-уоллом нестабильна. Держи темп!";
             } catch(e) {
-                return "Помехи на радиоканале... Возможно, проблема с API ключом. Проверьте Терминал.";
+                return "Помехи на радиоканале... Возможно, ошибка доступа. Проверьте Терминал.";
             }
         }
 
@@ -600,7 +596,7 @@
             if (msgIcon) msgIcon.classList.add('hidden');
         });
 
-        // --- ТАЙМЕР: DATA LAYER ---
+        // --- DATA LAYER ---
         function loadRaceSettings() {
             const saved = localStorage.getItem(STORAGE_KEY);
             if (saved) {
@@ -620,7 +616,6 @@
 
         function saveRaceSettings() { localStorage.setItem(STORAGE_KEY, JSON.stringify(raceGrid)); }
 
-        // Функции времени
         function calculateExactStartTime(h, m) {
             const d = new Date(); d.setHours(h, m, 0, 0);
             if (d > new Date()) d.setDate(d.getDate() - 1);
@@ -634,7 +629,7 @@
             return target.getTime();
         }
 
-        // --- ТАЙМЕР: UI RENDERING ---
+        // --- UI RENDERING ---
         function renderRaceSettingsList() {
             els.settingsList.innerHTML = raceGrid.map(car => {
                 if (car.id === 0) {
@@ -664,6 +659,20 @@
                 }
             }).join('');
         }
+
+        const formatTimer = (ms) => {
+            if (ms < 0) ms = 0;
+            const h = String(Math.floor(ms / 3600000)).padStart(2, '0');
+            const m = String(Math.floor((ms % 3600000) / 60000)).padStart(2, '0');
+            const s = String(Math.floor((ms % 60000) / 1000)).padStart(2, '0');
+            return `${h}:${m}:${s}`;
+        };
+
+        const formatLapTime = (ms) => {
+            if (ms === '--' || isNaN(ms)) return '--:--:--';
+            const sTotal = Math.floor(ms / 1000);
+            return `${String(Math.floor(sTotal / 3600)).padStart(2, '0')}:${String(Math.floor((sTotal % 3600) / 60)).padStart(2, '0')}:${String(sTotal % 60).padStart(2, '0')}`;
+        };
 
         // --- ТАЙМЕР: EVENTS ---
         els.btnStart.addEventListener('click', () => {
@@ -922,9 +931,7 @@
 
         els.btnMove.addEventListener('click', registerLap);
         document.addEventListener('keydown', (e) => {
-            // Защита от срабатывания, если таймер скрыт (мы в терминале)
             if (document.getElementById('view-timer').classList.contains('hidden')) return;
-
             if ((e.key.toLowerCase() === 'l' || e.key.toLowerCase() === 'д') && !els.btnMove.disabled && e.target.tagName !== 'INPUT') {
                 els.btnMove.classList.replace('bg-green-600', 'bg-green-400');
                 setTimeout(() => els.btnMove.classList.replace('bg-green-400', 'bg-green-600'), 100);
