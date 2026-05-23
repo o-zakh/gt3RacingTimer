@@ -1,3 +1,8 @@
-gt3RacingTimer.html
-new_gt3_0.html
-index_0.0.html
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
